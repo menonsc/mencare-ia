@@ -20,27 +20,21 @@ from supabase_config import get_supabase_client
 load_dotenv()
 
 # --- Configurações de Autenticação ---
-def carregar_config_usuarios():
-    """Carrega a configuração de usuários do arquivo config.yaml"""
-    try:
-        with open('config.yaml') as file:
-            return yaml.load(file, Loader=SafeLoader)
-    except FileNotFoundError:
-        st.error("Arquivo de configuração de usuários não encontrado!")
-        return None
-
 def verificar_credenciais(username, password):
-    """Verifica se as credenciais do usuário são válidas"""
-    config = carregar_config_usuarios()
-    if config is None:
+    """Verifica se as credenciais do usuário são válidas usando o Supabase"""
+    try:
+        # Tentar fazer login no Supabase
+        response = supabase.auth.sign_in_with_password({
+            "email": username,
+            "password": password
+        })
+        
+        if response.user:
+            return True
         return False
-    
-    if username in config['credentials']['usernames']:
-        stored_password = config['credentials']['usernames'][username]['password']
-        # Hash da senha fornecida para comparação
-        hashed_password = hashlib.sha256(password.encode()).hexdigest()
-        return stored_password == hashed_password
-    return False
+    except Exception as e:
+        st.error(f"Erro ao verificar credenciais: {e}")
+        return False
 
 def inicializar_autenticacao():
     """Inicializa o estado de autenticação"""
@@ -50,6 +44,28 @@ def inicializar_autenticacao():
         st.session_state.username = None
     if 'login_success' not in st.session_state:
         st.session_state.login_success = False
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
+
+def registrar_usuario(email, password, nome):
+    """Registra um novo usuário no Supabase"""
+    try:
+        response = supabase.auth.sign_up({
+            "email": email,
+            "password": password,
+            "options": {
+                "data": {
+                    "nome": nome
+                }
+            }
+        })
+        
+        if response.user:
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Erro ao registrar usuário: {e}")
+        return False
 
 def login():
     """Interface de login"""
@@ -63,18 +79,60 @@ def login():
         st.rerun()
         return
     
-    with st.form("login_form"):
-        username = st.text_input("Usuário")
-        password = st.text_input("Senha", type="password")
-        submit = st.form_submit_button("Entrar")
-        
-        if submit:
-            if verificar_credenciais(username, password):
-                st.session_state.username = username
-                st.session_state.login_success = True
-                st.rerun()
-            else:
-                st.error("Usuário ou senha inválidos!")
+    # Criar abas para login e registro
+    tab1, tab2 = st.tabs(["Login", "Registro"])
+    
+    with tab1:
+        with st.form("login_form"):
+            email = st.text_input("Email")
+            password = st.text_input("Senha", type="password")
+            submit = st.form_submit_button("Entrar")
+            
+            if submit:
+                if verificar_credenciais(email, password):
+                    # Obter informações do usuário do Supabase
+                    try:
+                        user = supabase.auth.get_user()
+                        st.session_state.username = user.user.email
+                        st.session_state.user_id = user.user.id
+                        st.session_state.login_success = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao obter informações do usuário: {e}")
+                else:
+                    st.error("Email ou senha inválidos!")
+    
+    with tab2:
+        with st.form("registro_form"):
+            nome = st.text_input("Nome Completo")
+            email = st.text_input("Email")
+            password = st.text_input("Senha", type="password")
+            confirm_password = st.text_input("Confirmar Senha", type="password")
+            submit = st.form_submit_button("Registrar")
+            
+            if submit:
+                if not all([nome, email, password, confirm_password]):
+                    st.error("Por favor, preencha todos os campos.")
+                elif password != confirm_password:
+                    st.error("As senhas não coincidem.")
+                else:
+                    if registrar_usuario(email, password, nome):
+                        st.success("Registro realizado com sucesso! Por favor, faça login.")
+                        st.rerun()
+                    else:
+                        st.error("Erro ao registrar usuário.")
+
+def logout():
+    """Realiza o logout do usuário no Supabase"""
+    try:
+        supabase.auth.sign_out()
+        st.session_state.autenticado = False
+        st.session_state.username = None
+        st.session_state.user_id = None
+        st.session_state.login_success = False
+        st.rerun()
+    except Exception as e:
+        st.error(f"Erro ao fazer logout: {e}")
 
 # --- Configurações Iniciais ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -1350,10 +1408,7 @@ else:
         st.title("🤖 Gerador de Copy Mencare ✍️")
     with col2:
         if st.button("🚪 Logout"):
-            st.session_state.autenticado = False
-            st.session_state.username = None
-            st.session_state.login_success = False
-            st.rerun()
+            logout()
 
     # Criar as abas
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 Gerar Copy", "📚 Histórico", "📊 Análise de Leads", "📈 Métricas", "🎯 Dashboard"])
