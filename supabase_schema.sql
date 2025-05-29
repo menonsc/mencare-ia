@@ -1,8 +1,6 @@
--- Habilitar a extensão UUID
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Tabela de usuários (já existe por padrão no Supabase)
--- A tabela auth.users é gerenciada automaticamente pelo Supabase
+
 
 -- Tabela de Copies
 CREATE TABLE copies (

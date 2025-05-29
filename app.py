@@ -590,7 +590,7 @@ def analisar_leads_csv(df, plataforma, objetivo):
         
         # Otimizar dados para análise
         # 1. Selecionar apenas colunas relevantes
-        colunas_relevantes = df.columns[:5]  # Limitar a 5 colunas
+        colunas_relevantes = df.columns[:9]  # Limitar a 9 colunas
         df_otimizado = df[colunas_relevantes].copy()
         
         # 2. Limitar número de linhas para análise
@@ -680,7 +680,7 @@ def analisar_leads_csv(df, plataforma, objetivo):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=800  # Reduzir o número máximo de tokens
+            max_tokens=800 
         )
         
         # Rastrear consumo de tokens
@@ -1250,7 +1250,6 @@ def gerar_dashboard():
 
 # Adicionar após as configurações iniciais
 def salvar_consumo_tokens(tokens_consumidos, tipo_operacao):
-    """Salva o consumo de tokens no Supabase"""
     try:
         # Adicionar usuário_id se disponível
         if 'username' in st.session_state:
@@ -1263,7 +1262,7 @@ def salvar_consumo_tokens(tokens_consumidos, tipo_operacao):
             "tipo": tipo_operacao,
             "total_tokens": tokens_consumidos,
             "plataforma": "copy" if tipo_operacao == "copy" else "analise",
-            "tempo_processamento": 0,  # Você pode adicionar o tempo de processamento se necessário
+            "tempo_processamento": 0, 
             "usuario_id": usuario_id,
             "data": datetime.now().isoformat()
         }
@@ -1294,7 +1293,7 @@ def salvar_metricas(metricas_data):
             payload = {
                 "tipo": "analise",
                 "plataforma": analise["plataforma"],
-                "total_tokens": 0,  # Você pode adicionar o total de tokens se necessário
+                "total_tokens": 0,
                 "tempo_processamento": analise["tempo_processamento"],
                 "data": datetime.now().isoformat()
             }
@@ -1302,7 +1301,7 @@ def salvar_metricas(metricas_data):
             payload = {
                 "tipo": "copy",
                 "plataforma": "copy",
-                "total_tokens": 0,  # Você pode adicionar o total de tokens se necessário
+                "total_tokens": 0, 
                 "tempo_processamento": 0,
                 "data": datetime.now().isoformat()
             }
@@ -1568,7 +1567,6 @@ else:
         else:
             st.info("Faça upload de um ou mais arquivos CSV para começar a análise.")
 
-        # Substituir a parte do histórico por:
         mostrar_historico_analises()
 
     with tab4:
