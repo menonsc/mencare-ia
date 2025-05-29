@@ -20,52 +20,36 @@ from supabase_config import get_supabase_client
 load_dotenv()
 
 # --- Configurações de Autenticação ---
-def verificar_credenciais(username, password):
-    """Verifica se as credenciais do usuário são válidas usando o Supabase"""
+def carregar_config_usuarios():
+    """Carrega a configuração de usuários do arquivo config.yaml"""
     try:
-        # Tentar fazer login no Supabase
-        response = supabase.auth.sign_in_with_password({
-            "email": username,
-            "password": password
-        })
-        
+        with open('config.yaml') as file:
+            return yaml.load(file, Loader=SafeLoader)
+    except FileNotFoundError:
+        st.error("Arquivo de configuração de usuários não encontrado!")
+        return None
+
+def verificar_credenciais(email, password):
+    """Verifica se as credenciais do usuário são válidas usando Supabase Auth"""
+    try:
+        # O cliente Supabase já deve estar inicializado globalmente
+        response = supabase.auth.sign_in_with_password({"email": email, "password": password})
         if response.user:
             return True
-        return False
     except Exception as e:
-        st.error(f"Erro ao verificar credenciais: {e}")
+        # Tratar erros específicos do Supabase se necessário, ex: usuário não encontrado, senha inválida
+        st.error(f"Erro de autenticação: {e}")
         return False
+    return False
 
 def inicializar_autenticacao():
     """Inicializa o estado de autenticação"""
     if 'autenticado' not in st.session_state:
         st.session_state.autenticado = False
-    if 'username' not in st.session_state:
+    if 'username' not in st.session_state: # Manter 'username' para consistência interna, mas ele guardará o email
         st.session_state.username = None
     if 'login_success' not in st.session_state:
         st.session_state.login_success = False
-    if 'user_id' not in st.session_state:
-        st.session_state.user_id = None
-
-def registrar_usuario(email, password, nome):
-    """Registra um novo usuário no Supabase"""
-    try:
-        response = supabase.auth.sign_up({
-            "email": email,
-            "password": password,
-            "options": {
-                "data": {
-                    "nome": nome
-                }
-            }
-        })
-        
-        if response.user:
-            return True
-        return False
-    except Exception as e:
-        st.error(f"Erro ao registrar usuário: {e}")
-        return False
 
 def login():
     """Interface de login"""
@@ -74,65 +58,23 @@ def login():
     # Se o login foi bem-sucedido, mostrar mensagem e redirecionar
     if st.session_state.login_success:
         st.success("Login realizado com sucesso!")
-        st.session_state.login_success = False
+        st.session_state.login_success = False # Resetar para evitar loop
         st.session_state.autenticado = True
         st.rerun()
         return
     
-    # Criar abas para login e registro
-    tab1, tab2 = st.tabs(["Login", "Registro"])
-    
-    with tab1:
-        with st.form("login_form"):
-            email = st.text_input("Email")
-            password = st.text_input("Senha", type="password")
-            submit = st.form_submit_button("Entrar")
-            
-            if submit:
-                if verificar_credenciais(email, password):
-                    # Obter informações do usuário do Supabase
-                    try:
-                        user = supabase.auth.get_user()
-                        st.session_state.username = user.user.email
-                        st.session_state.user_id = user.user.id
-                        st.session_state.login_success = True
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao obter informações do usuário: {e}")
-                else:
-                    st.error("Email ou senha inválidos!")
-    
-    with tab2:
-        with st.form("registro_form"):
-            nome = st.text_input("Nome Completo")
-            email = st.text_input("Email")
-            password = st.text_input("Senha", type="password")
-            confirm_password = st.text_input("Confirmar Senha", type="password")
-            submit = st.form_submit_button("Registrar")
-            
-            if submit:
-                if not all([nome, email, password, confirm_password]):
-                    st.error("Por favor, preencha todos os campos.")
-                elif password != confirm_password:
-                    st.error("As senhas não coincidem.")
-                else:
-                    if registrar_usuario(email, password, nome):
-                        st.success("Registro realizado com sucesso! Por favor, faça login.")
-                        st.rerun()
-                    else:
-                        st.error("Erro ao registrar usuário.")
-
-def logout():
-    """Realiza o logout do usuário no Supabase"""
-    try:
-        supabase.auth.sign_out()
-        st.session_state.autenticado = False
-        st.session_state.username = None
-        st.session_state.user_id = None
-        st.session_state.login_success = False
-        st.rerun()
-    except Exception as e:
-        st.error(f"Erro ao fazer logout: {e}")
+    with st.form("login_form"):
+        email = st.text_input("Email") # Alterado de Usuário para Email
+        password = st.text_input("Senha", type="password")
+        submit = st.form_submit_button("Entrar")
+        
+        if submit:
+            if verificar_credenciais(email, password):
+                st.session_state.username = email # Armazenar o email como 'username'
+                st.session_state.login_success = True
+                st.rerun()
+            else:
+                st.error("Email ou senha inválidos!")
 
 # --- Configurações Iniciais ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -335,7 +277,7 @@ def gerar_copy_openai(plataforma, objetivo, publico_alvo, produto_servico, tom_d
 
         # Rastrear consumo de tokens
         tokens_consumidos = response.usage.total_tokens
-        salvar_consumo_tokens(tokens_consumidos, "copy")
+        salvar_consumo_tokens(tokens_consumidos, "copy", st.session_state.username) # Passar username
         
         # Atualizar status - Finalizando
         status_text.text("✨ Finalizando e formatando copy...")
@@ -368,8 +310,18 @@ def salvar_no_supabase(data_to_save):
     """Salva uma copy no Supabase"""
     try:
         # Adicionar usuário_id se disponível
-        if 'username' in st.session_state:
-            data_to_save['usuario_id'] = st.session_state.username
+        if 'username' in st.session_state and st.session_state.username:
+            # Buscar o ID do usuário no Supabase com base no email (st.session_state.username)
+            user_response = supabase.table('users').select('id').eq('email', st.session_state.username).execute()
+            if user_response.data:
+                data_to_save['usuario_id'] = user_response.data[0]['id']
+            else:
+                auth_user = supabase.auth.get_user()
+                if auth_user and auth_user.user:
+                    data_to_save['usuario_id'] = auth_user.user.id
+                else:
+                     st.warning("Não foi possível obter o ID do usuário autenticado para salvar a copy.")
+
 
         # Formatar dados para o Supabase
         payload = {
@@ -400,150 +352,243 @@ def salvar_no_supabase(data_to_save):
         return False
 
 def salvar_analise_leads(analise_data):
-    """Salva a análise de leads no Supabase"""
+    """Salva a análise de leads no Supabase e retorna o ID da análise salva."""
     try:
-        # Adicionar usuário_id se disponível
-        if 'username' in st.session_state:
-            analise_data['usuario_id'] = st.session_state.username
+        auth_user = supabase.auth.get_user()
+        current_user_id = None
+        if auth_user and auth_user.user:
+            current_user_id = auth_user.user.id
+        else:
+            st.error("Usuário não autenticado. Não é possível salvar a análise de leads.")
+            return None # Retornar None em caso de falha na autenticação
 
-        # Formatar dados para o Supabase
         payload = {
             "plataforma": analise_data.get("plataforma"),
             "objetivo": analise_data.get("objetivo"),
-            "total_leads": analise_data.get("total_leads"),
+            "total_leads": analise_data.get("total_leads"), 
             "colunas": json.dumps(analise_data.get("colunas", [])),
             "analise": analise_data.get("analise"),
             "tempo_processamento": analise_data.get("tempo_processamento"),
-            "resumo_estatistico": json.dumps(analise_data.get("resumo_estatistico", {}))
+            "resumo_estatistico": json.dumps(analise_data.get("resumo_estatistico", {})),
+            "usuario_id": current_user_id,
+            "data": datetime.now().isoformat()
         }
 
-        # Salvar no Supabase
+        print(f"DEBUG: Tentando salvar em analises_leads com usuario_id: {current_user_id}")
         response = supabase.table('analises_leads').insert(payload).execute()
         
-        if response.data:
-            # Salvar tags se existirem
+        if response.data and len(response.data) > 0:
+            saved_analise_id = response.data[0]['id'] # UUID da análise salva
             if 'tags' in analise_data and analise_data['tags']:
-                for tag in analise_data['tags']:
-                    tag_data = {
-                        "analise_id": response.data[0]['id'],
-                        "categoria": "Personalizada",
-                        "tag": tag,
-                        "usuario_id": st.session_state.username
-                    }
-                    supabase.table('tags').insert(tag_data).execute()
+                tags_para_salvar = []
+                for tag_nome in analise_data['tags']:
+                    categoria_tag = "Personalizada"
+                    for cat, tags_list in TAGS_PREDEFINIDAS.items():
+                        if tag_nome in tags_list:
+                            categoria_tag = cat
+                            break
+                    tags_para_salvar.append({
+                        "analise_id": saved_analise_id, # Usar o UUID aqui
+                        "categoria": categoria_tag,
+                        "tag": tag_nome,
+                        "usuario_id": current_user_id 
+                    })
+                if tags_para_salvar:
+                    tags_response = supabase.table('tags').insert(tags_para_salvar).execute()
+                    if not (tags_response.data and len(tags_response.data) > 0):
+                        st.warning("Análise salva, mas houve um erro ao salvar algumas ou todas as tags.")
             
-            return True
+            st.success("Análise e tags salvas com sucesso no Supabase!")
+            return saved_analise_id # Retornar o UUID da análise salva
         else:
-            st.error("Erro ao salvar análise no Supabase.")
-            return False
+            error_msg = response.error.message if response.error else "Erro desconhecido"
+            st.error(f"Erro ao salvar análise no Supabase: {error_msg}")
+            return None # Retornar None em caso de falha
     except Exception as e:
-        st.error(f"Erro ao salvar análise: {e}")
-        return False
+        st.error(f"Erro excepcional ao salvar análise: {e}")
+        return None # Retornar None em caso de exceção
 
 def atualizar_tags_analise(analise_id, novas_tags):
-    """Atualiza as tags de uma análise específica"""
+    """Atualiza as tags de uma análise específica no Supabase."""
     try:
-        filename = f"historico/analises_{st.session_state.username}.json"
-        
-        if not os.path.exists(filename):
-            st.error("Nenhuma análise encontrada.")
+        auth_user = supabase.auth.get_user()
+        if not (auth_user and auth_user.user):
+            st.error("Usuário não autenticado. Não é possível atualizar as tags.")
             return False
-        
-        with open(filename, 'r', encoding='utf-8') as f:
-            historico = json.load(f)
-        
-        # Encontrar e atualizar a análise
-        for analise in historico:
-            if analise['id'] == analise_id:
-                analise['tags'] = novas_tags
-                break
-        
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(historico, f, ensure_ascii=False, indent=4)
-        
-        return True
+        user_id = auth_user.user.id
+
+        # 1. Deletar tags antigas para esta analise_id e usuario_id (para segurança)
+        delete_response = supabase.table('tags').delete().match({'analise_id': analise_id, 'usuario_id': user_id}).execute()
+
+        # 2. Inserir novas tags
+        if novas_tags:
+            tags_para_inserir = []
+            for tag_nome in novas_tags:
+                # Determinar a categoria da tag. Por enquanto, vou usar "Personalizada"
+                categoria_tag = "Personalizada" # Default
+                for cat, tags_list in TAGS_PREDEFINIDAS.items():
+                    if tag_nome in tags_list:
+                        categoria_tag = cat
+                        break
+                
+                tags_para_inserir.append({
+                    'analise_id': analise_id,
+                    'categoria': categoria_tag, # Adicionar categoria da tag
+                    'tag': tag_nome,
+                    'usuario_id': user_id
+                })
+            
+            if tags_para_inserir:
+                insert_response = supabase.table('tags').insert(tags_para_inserir).execute()
+                if insert_response.data:
+                    return True
+                else:
+                    st.error(f"Erro ao inserir novas tags no Supabase: {insert_response.error.message if insert_response.error else 'Erro desconhecido'}")
+                    return False
+        return True # Verdadeiro se não havia novas tags para inserir (tags antigas foram removidas)
+
     except Exception as e:
-        st.error(f"Erro ao atualizar tags: {e}")
+        st.error(f"Erro ao atualizar tags no Supabase: {e}")
         return False
 
-def gerar_insights_com_tags(analise, tags):
-    """Gera insights baseados nas tags da análise"""
+def gerar_insights_com_tags(analise_atual, tags_da_analise_atual):
+    """Gera insights baseados nas tags da análise, buscando no Supabase."""
     try:
-        # Carregar análises anteriores com tags similares
-        filename = f"historico/analises_{st.session_state.username}.json"
-        insights = []
+        auth_user = supabase.auth.get_user()
+        if not (auth_user and auth_user.user):
+            st.info("Usuário não autenticado. Insights baseados em tags não podem ser gerados.")
+            return "Nenhum insight similar encontrado (usuário não autenticado)."
+        user_id = auth_user.user.id
+        analise_id_atual = analise_atual['id']
+
+        if not tags_da_analise_atual:
+            return "Nenhuma tag fornecida para buscar insights similares."
+
+        # 1. Encontrar todas as analise_ids (diferentes da atual) que compartilham pelo menos uma tag com a análise atual
+        analises_similares_ids = set()
+        for tag_nome in tags_da_analise_atual:
+            response_tags_similares = supabase.table('tags')\
+                .select('analise_id')\
+                .eq('usuario_id', user_id)\
+                .eq('tag', tag_nome)\
+                .neq('analise_id', analise_id_atual)\
+                .execute()
+            if response_tags_similares.data:
+                for item in response_tags_similares.data:
+                    analises_similares_ids.add(item['analise_id'])
         
-        if os.path.exists(filename):
-            with open(filename, 'r', encoding='utf-8') as f:
-                historico = json.load(f)
-            
-            # Filtrar análises com tags similares
-            analises_similares = [
-                a for a in historico 
-                if a['id'] != analise['id'] and 
-                any(tag in a.get('tags', []) for tag in tags)
-            ]
-            
-            if analises_similares:
-                # Agrupar insights por tipo de tag
-                insights_por_tag = {}
-                for tag in tags:
-                    insights_por_tag[tag] = []
+        if not analises_similares_ids:
+            return "Nenhum insight similar encontrado com as tags fornecidas."
+
+        # 2. Buscar os detalhes dessas análises similares
+        response_analises_similares = supabase.table('analises_leads')\
+            .select('id, data, plataforma, objetivo, analise')\
+            .in_('id', list(analises_similares_ids))\
+            .order('data', desc=True)\
+            .limit(5) .execute() # Limitar o número de análises similares para não sobrecarregar
+
+        insights_gerados = []
+        if response_analises_similares.data:
+            insights_gerados.append("\n### Insights de Análises Anteriores com Tags Similares:")
+            for analise_similar_db in response_analises_similares.data:
+                data_iso = analise_similar_db.get('data')
+                data_formatada = str(data_iso)
+                if data_iso:
+                    try:
+                        dt_obj = datetime.fromisoformat(data_iso.replace('Z', '+00:00').replace('+0000', '+00:00'))
+                        data_formatada = dt_obj.strftime("%d/%m/%Y %H:%M:%S")
+                    except ValueError:
+                        try:
+                            dt_obj = datetime.strptime(data_iso, "%d/%m/%Y %H:%M:%S")
+                            data_formatada = dt_obj.strftime("%d/%m/%Y %H:%M:%S")
+                        except ValueError:
+                            pass
                 
-                for analise_similar in analises_similares:
-                    for tag in tags:
-                        if tag in analise_similar.get('tags', []):
-                            insights_por_tag[tag].append({
-                                'data': analise_similar['data'],
-                                'plataforma': analise_similar['plataforma'],
-                                'objetivo': analise_similar['objetivo'],
-                                'analise': analise_similar['analise']
-                            })
-                
-                # Formatar insights
-                for tag, analises in insights_por_tag.items():
-                    if analises:
-                        insights.append(f"\n### Insights baseados na tag '{tag}':")
-                        for analise_similar in analises[:3]:  # Limitar a 3 insights por tag
-                            insights.append(f"""
-**Data:** {analise_similar['data']}
-**Plataforma:** {analise_similar['plataforma']}
-**Objetivo:** {analise_similar['objetivo']}
-**Análise:** {analise_similar['analise']}
+                insights_gerados.append(f"""
+**Data:** {data_formatada}
+**Plataforma:** {analise_similar_db.get('plataforma', 'N/A')}
+**Objetivo:** {analise_similar_db.get('objetivo', 'N/A')}
+**Análise Resumida:** {analise_similar_db.get('analise', 'N/A')[:200] + '...' if analise_similar_db.get('analise') else 'N/A'}
 ---""")
-        
-        return "\n".join(insights) if insights else "Nenhum insight similar encontrado."
+            return "\n".join(insights_gerados)
+        else:
+            return "Nenhum insight similar encontrado com as tags fornecidas."
+
     except Exception as e:
-        st.error(f"Erro ao gerar insights: {e}")
+        st.error(f"Erro ao gerar insights com tags do Supabase: {e}")
         return "Erro ao gerar insights."
 
 def carregar_historico_analises():
-    """Carrega o histórico de análises do usuário atual"""
+    """Carrega o histórico de análises do usuário atual a partir do Supabase."""
     try:
-        filename = f"historico/analises_{st.session_state.username}.json"
-        if os.path.exists(filename):
-            with open(filename, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return []
+        auth_user = supabase.auth.get_user()
+        if not (auth_user and auth_user.user):
+            st.error("Usuário não autenticado. Não é possível carregar o histórico de análises.")
+            return []
+
+        user_id = auth_user.user.id
+        
+        # Buscar análises do usuário
+        response_analises = supabase.table('analises_leads').select('*').eq('usuario_id', user_id).order('data', desc=True).execute()
+        
+        if response_analises.data:
+            historico_com_tags = []
+            for analise_db in response_analises.data:
+                # Para cada análise, buscar suas tags
+                response_tags = supabase.table('tags').select('tag').eq('analise_id', analise_db['id']).execute()
+                
+                tags_da_analise = []
+                if response_tags.data:
+                    tags_da_analise = [item['tag'] for item in response_tags.data]
+                
+                # Montar o dicionário da análise no formato esperado
+                # Convertendo campos JSON de string para dict/list se necessário
+                colunas = json.loads(analise_db.get('colunas', '[]')) if isinstance(analise_db.get('colunas'), str) else analise_db.get('colunas', [])
+                resumo_estatistico = json.loads(analise_db.get('resumo_estatistico', '{}')) if isinstance(analise_db.get('resumo_estatistico'), str) else analise_db.get('resumo_estatistico', {})
+
+                analise_formatada = {
+                    "id": analise_db['id'],
+                    "data": analise_db.get('data_criacao') or analise_db.get('data', datetime.now().strftime("%d/%m/%Y %H:%M:%S")), # Ajustar nome da coluna de data se necessário
+                    "plataforma": analise_db['plataforma'],
+                    "objetivo": analise_db['objetivo'],
+                    "total_leads": analise_db.get('total_leads'),
+                    "colunas": colunas,
+                    "analise": analise_db['analise'],
+                    "tempo_processamento": analise_db.get('tempo_processamento'),
+                    "resumo_estatistico": resumo_estatistico,
+                    "tags": tags_da_analise,
+                    "usuario_id": analise_db.get('usuario_id')
+                }
+                historico_com_tags.append(analise_formatada)
+            return historico_com_tags
+        else:
+            return []
+            
     except Exception as e:
-        st.error(f"Erro ao carregar histórico: {e}")
+        st.error(f"Erro ao carregar histórico de análises do Supabase: {e}")
         return []
 
 def salvar_feedback(analise_id, feedback_data):
     """Salva o feedback no Supabase"""
     try:
-        # Adicionar usuário_id se disponível
-        if 'username' in st.session_state:
-            feedback_data['usuario_id'] = st.session_state.username
+        auth_user = supabase.auth.get_user()
+        if not (auth_user and auth_user.user):
+            st.error("Usuário não autenticado. Não é possível salvar o feedback.")
+            return False
+        
+        current_user_id = auth_user.user.id
 
         # Formatar dados para o Supabase
         payload = {
             "analise_id": analise_id,
+            "data": datetime.now().isoformat(), # Adicionando data do feedback
             "pontos_positivos": feedback_data.get("pontos_positivos"),
             "pontos_melhorar": feedback_data.get("pontos_melhorar"),
             "nota": feedback_data.get("nota"),
-            "editado": False,
-            "historico_edicoes": json.dumps([])
+            "editado": False, 
+            "ultima_edicao": datetime.now().isoformat(), # Definindo na criação também
+            "historico_edicoes": json.dumps([]),
+            "usuario_id": current_user_id 
         }
 
         # Salvar no Supabase
@@ -552,60 +597,112 @@ def salvar_feedback(analise_id, feedback_data):
         if response.data:
             return True
         else:
-            st.error("Erro ao salvar feedback no Supabase.")
+            st.error(f"Erro ao salvar feedback: {response.error.message if response.error else 'Erro desconhecido'}")
             return False
     except Exception as e:
         st.error(f"Erro ao salvar feedback: {e}")
         return False
 
-def editar_feedback(analise_id, novo_feedback):
-    """Edita um feedback existente"""
+def editar_feedback(analise_id, novo_feedback_data):
+    """Edita um feedback existente no Supabase."""
     try:
-        filename = f"feedback/feedback_{st.session_state.username}.json"
-        
-        if not os.path.exists(filename):
-            st.error("Nenhum feedback encontrado para editar.")
+        auth_user = supabase.auth.get_user()
+        if not (auth_user and auth_user.user):
+            st.error("Usuário não autenticado. Não é possível editar o feedback.")
+            return False
+        user_id = auth_user.user.id
+
+        # 1. Buscar o feedback existente do usuário para esta análise
+        # É importante buscar pelo user_id para garantir que o usuário só edite seu próprio feedback.
+        response_get = supabase.table('feedback')\
+            .select('*')\
+            .eq('analise_id', analise_id)\
+            .eq('usuario_id', user_id)\
+            .order('created_at', desc=True)\
+            .limit(1)\
+            .maybe_single()\
+            .execute()
+
+        # Adicionar verificação para a própria `response`
+        if response_get is None:
+            st.warning("A consulta ao Supabase para carregar feedback retornou None inesperadamente.")
+            return None
+
+        # Se .maybe_single() não encontrar nada, response.data será None.
+        # A exceção está sendo pega no bloco `except` abaixo.
+
+        if not response_get.data:
+            st.error("Feedback original não encontrado para editar ou você não tem permissão.")
             return False
         
-        with open(filename, 'r', encoding='utf-8') as f:
-            feedbacks = json.load(f)
+        feedback_atual = response_get.data
+        feedback_id_db = feedback_atual['id'] # ID do registro de feedback no banco
+
+        # 2. Preparar o histórico
+        historico_edicoes_atual_str = feedback_atual.get('historico_edicoes', '[]')
+        historico_edicoes_atual = []
+        if isinstance(historico_edicoes_atual_str, str):
+            try:
+                historico_edicoes_atual = json.loads(historico_edicoes_atual_str)
+            except json.JSONDecodeError:
+                st.warning("Histórico de edições do feedback está mal formatado.")
+        elif isinstance(historico_edicoes_atual_str, list):
+            historico_edicoes_atual = historico_edicoes_atual_str
         
-        if analise_id not in feedbacks:
-            st.error("Feedback não encontrado.")
+        feedback_anterior_para_historico = {
+            "pontos_positivos": feedback_atual.get('pontos_positivos'),
+            "pontos_melhorar": feedback_atual.get('pontos_melhorar'),
+            "nota": feedback_atual.get('nota'),
+            "ultima_edicao_original": feedback_atual.get('ultima_edicao') or feedback_atual.get('updated_at'), # Usar updated_at como fallback
+            "timestamp_arquivamento": datetime.now().isoformat()
+        }
+        historico_edicoes_atual.append(feedback_anterior_para_historico)
+
+        # 3. Preparar dados para atualização
+        dados_para_atualizar = {
+            "pontos_positivos": novo_feedback_data.get("pontos_positivos"),
+            "pontos_melhorar": novo_feedback_data.get("pontos_melhorar"),
+            "nota": novo_feedback_data.get("nota"),
+            "editado": True,
+            "ultima_edicao": datetime.now().isoformat(),
+            "historico_edicoes": json.dumps(historico_edicoes_atual) # Salvar como string JSON
+        }
+
+        # 4. Atualizar o feedback no Supabase usando o ID do registro de feedback
+        response_update = supabase.table('feedback').update(dados_para_atualizar).eq('id', feedback_id_db).execute()
+
+        if response_update.data:
+            return True
+        else:
+            error_msg = response_update.error.message if response_update.error else "Erro desconhecido"
+            st.error(f"Erro ao atualizar feedback no Supabase: {error_msg}")
             return False
-        
-        # Salvar versão anterior no histórico
-        feedback_anterior = feedbacks[analise_id].copy()
-        feedback_anterior["timestamp_edicao"] = datetime.now().isoformat()
-        
-        feedbacks[analise_id]["historico_edicoes"].append(feedback_anterior)
-        
-        # Atualizar feedback
-        feedbacks[analise_id].update(novo_feedback)
-        feedbacks[analise_id]["editado"] = True
-        feedbacks[analise_id]["ultima_edicao"] = datetime.now().isoformat()
-        
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(feedbacks, f, ensure_ascii=False, indent=4)
-        
-        return True
+
     except Exception as e:
-        st.error(f"Erro ao editar feedback: {e}")
+        st.error(f"Erro excepcional ao editar feedback: {e}")
         return False
 
 def salvar_metricas_plataforma(plataforma, metricas_data):
     """Salva métricas específicas da plataforma no Supabase"""
     try:
-        # Adicionar usuário_id se disponível
-        if 'username' in st.session_state:
-            metricas_data['usuario_id'] = st.session_state.username
+        auth_user = supabase.auth.get_user()
+        
+        if not (auth_user and auth_user.user):
+            st.error("Usuário não autenticado. Não é possível salvar métricas da plataforma.")
+            return False
+        
+        current_user_id = auth_user.user.id # Definir claramente a variável com o ID
 
         # Formatar dados para o Supabase
         payload = {
             "plataforma": plataforma,
-            "metricas": json.dumps(metricas_data),
-            "data": datetime.now().isoformat()
+            "metricas": json.dumps(metricas_data), 
+            "data": datetime.now().isoformat(),
+            "usuario_id": current_user_id 
         }
+        
+        # Log para depuração
+        print(f"DEBUG: Tentando salvar em metricas_plataforma com usuario_id: {current_user_id}, tipo: {type(current_user_id)}")
 
         # Salvar no Supabase
         response = supabase.table('metricas_plataforma').insert(payload).execute()
@@ -613,196 +710,180 @@ def salvar_metricas_plataforma(plataforma, metricas_data):
         if response.data:
             return True
         else:
-            st.error("Erro ao salvar métricas no Supabase.")
+            st.error(f"Erro ao salvar métricas no Supabase: {response.error.message if response.error else 'Erro desconhecido'}")
             return False
     except Exception as e:
         st.error(f"Erro ao salvar métricas da plataforma: {e}")
         return False
 
-def analisar_leads_csv(df, plataforma, objetivo):
-    """
-    Analisa os leads do CSV e gera insights usando a IA
-    """
+def analisar_leads_csv_openai(df, plataforma, objetivo, tempo_inicio_global, resumo_estatistico_global):
+    progress_bar = st.progress(0)
+    status_text = st.empty()
     try:
-        # Criar barra de progresso
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        tempo_inicio = time.time()
-        
-        # Atualizar status - Preparando dados
-        status_text.text("🔄 Preparando dados para análise...")
+        status_text.text("🔄 Preparando dados para análise (OpenAI)... ")
         progress_bar.progress(10)
-        time.sleep(0.5)
         
-        # Carregar feedbacks anteriores para melhorar a análise
-        feedbacks = []
-        if os.path.exists(f"feedback/feedback_{st.session_state.username}.json"):
-            with open(f"feedback/feedback_{st.session_state.username}.json", 'r', encoding='utf-8') as f:
-                feedbacks = list(json.load(f).values())
-        
-        # Atualizar status - Processando dados
-        status_text.text("📊 Processando dados dos leads...")
-        progress_bar.progress(30)
-        time.sleep(0.5)
-        
-        # Otimizar dados para análise
-        # 1. Selecionar apenas colunas relevantes
-        colunas_relevantes = df.columns[:9]  # Limitar a 9 colunas
+        colunas_relevantes = df.columns[:9]
         df_otimizado = df[colunas_relevantes].copy()
-        
-        # 2. Limitar número de linhas para análise
-        max_linhas = 100  # Limitar a 100 linhas para análise
+        max_linhas = 100
         if len(df_otimizado) > max_linhas:
             df_otimizado = df_otimizado.sample(n=max_linhas, random_state=42)
-        
-        # 3. Preparar resumo estatístico
-        resumo_estatistico = {
-            "total_leads": len(df),
-            "colunas_analisadas": list(colunas_relevantes),
-            "amostra_analisada": len(df_otimizado),
-            "estatisticas": {}
-        }
-        
-        # Adicionar estatísticas básicas para cada coluna
-        for coluna in colunas_relevantes:
-            if df_otimizado[coluna].dtype in ['int64', 'float64']:
-                resumo_estatistico["estatisticas"][coluna] = {
-                    "media": df_otimizado[coluna].mean(),
-                    "mediana": df_otimizado[coluna].median(),
-                    "min": df_otimizado[coluna].min(),
-                    "max": df_otimizado[coluna].max()
-                }
-            else:
-                # Para colunas categóricas, mostrar top 5 valores mais frequentes
-                resumo_estatistico["estatisticas"][coluna] = {
-                    "valores_mais_frequentes": df_otimizado[coluna].value_counts().head().to_dict()
-                }
-        
-        # Converter o DataFrame otimizado para string
         df_str = df_otimizado.to_string()
-        
-        # Preparar contexto de aprendizado baseado em feedbacks anteriores
+
+        feedbacks_contexto = []
+        try:
+            auth_user = supabase.auth.get_user()
+            if auth_user and auth_user.user:
+                user_id = auth_user.user.id
+                response_feedbacks = supabase.table('feedback')\
+                    .select('pontos_positivos, pontos_melhorar')\
+                    .eq('usuario_id', user_id)\
+                    .order('created_at', desc=True)\
+                    .limit(10).execute()
+                if response_feedbacks and response_feedbacks.data:
+                    for fb_item in response_feedbacks.data:
+                        if fb_item.get('pontos_positivos') or fb_item.get('pontos_melhorar'):
+                            feedbacks_contexto.append(fb_item)
+                            if len(feedbacks_contexto) >= 3:
+                                break
+        except Exception as e_fb:
+            st.warning(f"Não foi possível carregar feedbacks para contexto OpenAI: {e_fb}")
+
         contexto_aprendizado = ""
-        if feedbacks:
-            contexto_aprendizado = """
-            Baseado em feedbacks anteriores dos usuários, considere:
-            """
-            for feedback in feedbacks[:3]:  # Limitar a 3 feedbacks mais recentes
-                if feedback.get('pontos_positivos'):
-                    contexto_aprendizado += f"\n- Pontos positivos anteriores: {feedback['pontos_positivos']}"
-                if feedback.get('pontos_melhorar'):
-                    contexto_aprendizado += f"\n- Pontos a melhorar: {feedback['pontos_melhorar']}"
-        
-        # Atualizar status - Configurando análise
+        if feedbacks_contexto:
+            contexto_aprendizado = """\
+Baseado em feedbacks anteriores dos usuários, considere:"""
+            for feedback_item in feedbacks_contexto:
+                if feedback_item.get('pontos_positivos'):
+                    contexto_aprendizado += f"\
+- Pontos positivos anteriores: {feedback_item['pontos_positivos']}"
+                if feedback_item.get('pontos_melhorar'):
+                    contexto_aprendizado += f"\
+- Pontos a melhorar: {feedback_item['pontos_melhorar']}"
+
         status_text.text("⚙️ Configurando análise com IA...")
         progress_bar.progress(50)
-        time.sleep(0.5)
-        
-        prompt = f"""
+        prompt = f'''
         Você é um especialista em análise de dados e marketing digital.
         Analise os seguintes dados de leads e forneça insights relevantes para {plataforma} com o objetivo de {objetivo}.
-
         {contexto_aprendizado}
-
         Resumo dos dados:
-        - Total de leads: {resumo_estatistico['total_leads']}
-        - Amostra analisada: {resumo_estatistico['amostra_analisada']}
-        - Colunas analisadas: {', '.join(resumo_estatistico['colunas_analisadas'])}
-
+        - Total de leads: {resumo_estatistico_global['total_leads']}
+        - Amostra analisada: {resumo_estatistico_global['amostra_analisada']}
+        - Colunas analisadas: {', '.join(resumo_estatistico_global['colunas_analisadas'])}
         Estatísticas básicas:
-        {json.dumps(resumo_estatistico['estatisticas'], indent=2)}
-
+        {json.dumps(resumo_estatistico_global['estatisticas'], indent=2)}
         Dados da amostra:
         {df_str}
-
         Por favor, forneça:
         1. Análise geral dos dados
         2. Insights específicos para {plataforma}
         3. Recomendações de estratégia para atingir o objetivo de {objetivo}
         4. Sugestões de segmentação dos leads
         5. Possíveis abordagens personalizadas
-
         Mantenha a análise clara e objetiva, focando em insights acionáveis.
-        """
-
-        # Atualizar status - Gerando análise
-        status_text.text("🤖 Gerando análise com IA...")
+        '''
+        status_text.text("🤖 Gerando análise com IA (OpenAI)... ")
         progress_bar.progress(70)
-        time.sleep(0.5)
-
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": "Você é um especialista em análise de dados e marketing digital."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=800 
-        )
+        response_openai = client.chat.completions.create(
+            model="gpt-4.1-mini", 
+            messages=[{"role": "system", "content": "Você é um especialista em análise de dados e marketing digital."}, 
+                      {"role": "user", "content": prompt}],
+            temperature=0.7, max_tokens=800)
         
-        # Rastrear consumo de tokens
-        tokens_consumidos = response.usage.total_tokens
-        salvar_consumo_tokens(tokens_consumidos, "analise")
+        tokens_consumidos = response_openai.usage.total_tokens
+        username_para_tokens = st.session_state.get('username') # Usar .get() para segurança
+        salvar_consumo_tokens(tokens_consumidos, "analise", username_para_tokens)
         
-        # Atualizar status - Finalizando
-        status_text.text("✨ Finalizando e formatando análise...")
+        status_text.text("✨ Finalizando e formatando análise (OpenAI)... ")
         progress_bar.progress(90)
-        time.sleep(0.5)
+        analise_texto_ia = response_openai.choices[0].message.content.strip()
+        tempo_processamento_ia = time.time() - tempo_inicio_global
         
-        analise = response.choices[0].message.content.strip()
-        analise_id = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{hashlib.md5(analise.encode()).hexdigest()[:8]}"
-        
-        # Calcular tempo de processamento
-        tempo_processamento = time.time() - tempo_inicio
-        
-        # Preparar dados para salvar no histórico
-        analise_data = {
-            "id": analise_id,
-            "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-            "plataforma": plataforma,
-            "objetivo": objetivo,
-            "total_leads": len(df),
-            "colunas": list(df.columns),
-            "analise": analise,
-            "tempo_processamento": tempo_processamento,
-            "resumo_estatistico": resumo_estatistico
-        }
-        
-        # Salvar no histórico
-        salvar_analise_leads(analise_data)
-        
-        # Salvar métricas
-        metricas_data = {
-            "analise": {
-                "data": analise_data["data"],
-                "plataforma": plataforma,
-                "objetivo": objetivo,
-                "total_leads": len(df),
-                "tempo_processamento": tempo_processamento
-            }
-        }
-        salvar_metricas(metricas_data)
-        
-        # Concluído
-        status_text.text("✅ Análise concluída com sucesso!")
+        status_text.text("✅ Análise (OpenAI) concluída!")
         progress_bar.progress(100)
         time.sleep(0.5)
-        
-        # Limpar elementos de progresso
         progress_bar.empty()
         status_text.empty()
-        
-        return analise, analise_id
-    except Exception as e:
-        # Em caso de erro
-        status_text.text("❌ Erro ao analisar leads")
+        return analise_texto_ia, tempo_processamento_ia
+
+    except Exception as e_openai:
+        status_text.text(f"❌ Erro na análise com OpenAI: {e_openai}")
         progress_bar.progress(0)
         time.sleep(1)
         progress_bar.empty()
         status_text.empty()
-        st.error(f"Erro ao analisar os leads: {e}")
-        return None, None
+        st.error(f"Erro ao analisar os leads com OpenAI: {e_openai}")
+        return None, 0
+
+def analisar_leads_csv(df, plataforma, objetivo):
+    """
+    Prepara dados, chama a análise da OpenAI, salva os resultados e retorna a análise, ID e tempo de processamento.
+    """
+    # Definir tempo_inicio aqui, fora do try, para garantir que sempre exista se a função for chamada.
+    # No entanto, para medir o tempo do bloco 'try', ele deve estar dentro.
+    # Garantir que seja a primeira coisa no try.
+    try:
+        tempo_inicio = time.time() # Primeira linha DENTRO do try para medir a duração correta.
+        
+        colunas_relevantes = df.columns[:9]
+        df_otimizado_para_stats = df[colunas_relevantes].copy()
+        max_linhas_stats = 100 
+        if len(df_otimizado_para_stats) > max_linhas_stats:
+            df_otimizado_para_stats = df_otimizado_para_stats.sample(n=max_linhas_stats, random_state=42)
+
+        resumo_estatistico = {
+            "total_leads": len(df),
+            "colunas_analisadas": list(colunas_relevantes),
+            "amostra_analisada": len(df_otimizado_para_stats),
+            "estatisticas": {}
+        }
+        for coluna in colunas_relevantes:
+            if df_otimizado_para_stats[coluna].dtype in ['int64', 'float64']:
+                resumo_estatistico["estatisticas"][coluna] = {
+                    "media": df_otimizado_para_stats[coluna].mean(),
+                    "mediana": df_otimizado_para_stats[coluna].median(),
+                    "min": df_otimizado_para_stats[coluna].min(),
+                    "max": df_otimizado_para_stats[coluna].max()
+                }
+            else:
+                resumo_estatistico["estatisticas"][coluna] = {
+                    "valores_mais_frequentes": df_otimizado_para_stats[coluna].value_counts().head().to_dict()
+                }
+
+        analise_gerada_pela_ia, tempo_processamento_openai = analisar_leads_csv_openai(
+            df, plataforma, objetivo, tempo_inicio, resumo_estatistico # tempo_inicio é passado aqui
+        )
+
+        if analise_gerada_pela_ia:
+            analise_payload_para_salvar = {
+                "plataforma": plataforma,
+                "objetivo": objetivo,
+                "total_leads": len(df), 
+                "colunas": list(df.columns), 
+                "analise": analise_gerada_pela_ia,
+                "tempo_processamento": tempo_processamento_openai, # Este é o tempo da IA
+                "resumo_estatistico": resumo_estatistico,
+                "tags": [] 
+            }
+            
+            db_analise_id_uuid = salvar_analise_leads(analise_payload_para_salvar)
+            
+            if db_analise_id_uuid:
+                # Retornar o texto da análise, o ID do banco de dados e o tempo de processamento da IA
+                return analise_gerada_pela_ia, db_analise_id_uuid, tempo_processamento_openai
+            else:
+                st.error("Falha ao salvar a análise no banco de dados (depois da IA).")
+                return None, None, None # Falha ao salvar no DB
+        else:
+            # Se analise_gerada_pela_ia for None (erro na OpenAI)
+            return None, None, None # Erro na OpenAI
+
+    except Exception as e:
+        # Se o NameError for aqui, significa que 'tempo_inicio' não foi definido antes de ser usado
+        # na chamada de analisar_leads_csv_openai.
+        st.error(f"Erro geral ao processar CSV e analisar leads: {e}")
+        return None, None, None
 
 def mostrar_historico_analises():
     """Mostra o histórico de análises com opções de feedback e métricas"""
@@ -832,8 +913,10 @@ def mostrar_historico_analises():
                 if any(tag in analise.get('tags', []) for tag in tags_selecionadas)
             ]
         
-        for idx, analise in enumerate(reversed(historico_analises)):
-            with st.expander(f"Análise #{len(historico_analises) - idx} - {analise['plataforma']} - {analise['data']}"):
+        # Modificado para iterar diretamente e ajustar a numeração
+        for idx, analise in enumerate(historico_analises):
+            # Modificado para exibir Análise #idx+1
+            with st.expander(f"Análise #{idx + 1} - {analise['plataforma']} - {analise['data']}"):
                 col1, col2 = st.columns([3, 1])
                 
                 with col1:
@@ -882,7 +965,7 @@ def mostrar_historico_analises():
                 
                 # Seção de Feedback
                 st.subheader("💭 Feedback da Análise")
-                feedback = carregar_feedback(analise['id'])
+                feedback = carregar_feedback(analise['id'], analise.get('usuario_id')) # Passar usuario_id
                 
                 if feedback:
                     st.write("**Feedback Atual:**")
@@ -1027,61 +1110,188 @@ def mostrar_historico_analises():
                     st.code(analise['analise'])
                     st.success("Análise copiada para a área de transferência!")
 
-def carregar_feedback(analise_id):
-    """Carrega o feedback para uma análise específica"""
+def carregar_feedback(analise_id, usuario_id_analise):
+    """Carrega o feedback para uma análise específica do Supabase."""
     try:
-        filename = f"feedback/feedback_{st.session_state.username}.json"
-        if os.path.exists(filename):
-            with open(filename, 'r', encoding='utf-8') as f:
-                feedbacks = json.load(f)
-                return feedbacks.get(analise_id, None)
-        return None
+        auth_user = supabase.auth.get_user()
+        user_id_logado = auth_user.user.id if auth_user and auth_user.user else None
+
+        if not user_id_logado:
+            st.info("Usuário não autenticado. Não é possível carregar o feedback.")
+            return None
+
+        response = supabase.table('feedback')\
+            .select('*')\
+            .eq('analise_id', analise_id)\
+            .eq('usuario_id', user_id_logado)\
+            .order('created_at', desc=True)\
+            .limit(1)\
+            .maybe_single()\
+            .execute()
+
+        # Adicionar verificação para a própria `response`
+        if response is None:
+            st.warning("A consulta ao Supabase para carregar feedback retornou None inesperadamente.")
+            return None
+
+        # Se .maybe_single() não encontrar nada, response.data será None.
+        # A exceção está sendo pega no bloco `except` abaixo.
+
+        if response.data is None:
+            return None 
+
+        feedback_db = response.data
+        
+        historico_edicoes_str = feedback_db.get('historico_edicoes')
+        historico_edicoes = []
+        if isinstance(historico_edicoes_str, str) and historico_edicoes_str:
+            try:
+                historico_edicoes = json.loads(historico_edicoes_str)
+            except json.JSONDecodeError:
+                st.warning(f"Falha ao decodificar historico_edicoes para feedback da analise_id {analise_id}")
+        elif isinstance(historico_edicoes_str, list):
+             historico_edicoes = historico_edicoes_str
+
+        return {
+            "id": feedback_db.get('id'),
+            "analise_id": feedback_db.get('analise_id'),
+            "pontos_positivos": feedback_db.get('pontos_positivos'),
+            "pontos_melhorar": feedback_db.get('pontos_melhorar'),
+            "nota": feedback_db.get('nota'),
+            "editado": feedback_db.get('editado', False),
+            "ultima_edicao": feedback_db.get('ultima_edicao') or feedback_db.get('updated_at'), # Usar updated_at como fallback
+            "historico_edicoes": historico_edicoes,
+            "usuario_id": feedback_db.get('usuario_id')
+        }
+
     except Exception as e:
-        st.error(f"Erro ao carregar feedback: {e}")
-        return None
+        # Converter a exceção para string para verificar se é o erro "204 No Content"
+        error_str = str(e)
+        # O erro reportado é: "{'message': 'Missing response', 'code': '204', ...}"
+        # Verificar pela presença de 'code': '204' na string da exceção.
+        if "'code': '204'" in error_str or "PGRST116" in error_str: # PGRST116 é o código PostgREST para "item não encontrado"
+            # Este é o caso em que nenhum feedback foi encontrado (HTTP 204 ou erro semântico PGRST116).
+            # Não é um erro fatal para a aplicação, apenas significa que não há dados.
+            return None
+        else:
+            # Se for qualquer outro erro, mostrar a mensagem de erro.
+            st.error(f"Erro ao carregar feedback do Supabase: {e}")
+            return None
 
 def carregar_metricas():
-    """Carrega as métricas de performance do usuário"""
+    """Carrega e calcula as métricas de performance do usuário a partir do Supabase."""
     try:
-        filename = f"metricas/metricas_{st.session_state.username}.json"
-        if os.path.exists(filename):
-            with open(filename, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return None
-    except Exception as e:
-        st.error(f"Erro ao carregar métricas: {e}")
-        return None
-
-def carregar_metricas_plataforma():
-    """Carrega as métricas específicas da plataforma"""
-    try:
-        filename = f"metricas/metricas_plataforma_{st.session_state.username}.json"
-        if os.path.exists(filename):
-            with open(filename, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return None
-    except Exception as e:
-        st.error(f"Erro ao carregar métricas da plataforma: {e}")
-        return None
-
-def carregar_consumo_tokens():
-    """Carrega o consumo de tokens do usuário"""
-    try:
-        filename = f"metricas/tokens_{st.session_state.username}.json"
-        if os.path.exists(filename):
-            with open(filename, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return {
-            "total_tokens": 0,
-            "historico": [],
-            "por_operacao": {
-                "copy": 0,
-                "analise": 0
+        auth_user = supabase.auth.get_user()
+        if not (auth_user and auth_user.user):
+            st.info("Usuário não autenticado. Métricas gerais não podem ser carregadas.")
+            return {
+                "total_analises": 0, "total_copies": 0, "tempo_medio_analise": 0.0,
+                "media_notas": 0.0, "total_feedback": 0, "plataformas_mais_usadas": {},
+                "objetivos_mais_comuns": {},
+                "analises": []
             }
+        user_id = auth_user.user.id
+
+        metricas_calculadas = {
+            "total_analises": 0,
+            "total_copies": 0,
+            "tempo_medio_analise": 0.0,
+            "media_notas": 0.0,
+            "total_feedback": 0,
+            "plataformas_mais_usadas": defaultdict(int),
+            "objetivos_mais_comuns": defaultdict(int),
+            "analises": []
         }
+
+        # 1. Total de Análises
+        response_total_analises = supabase.table('analises_leads').select('id', count='exact').eq('usuario_id', user_id).execute()
+        if response_total_analises.count is not None:
+            metricas_calculadas["total_analises"] = response_total_analises.count
+
+        # 2. Total de Copies
+        response_total_copies = supabase.table('copies').select('id', count='exact').eq('usuario_id', user_id).execute()
+        if response_total_copies.count is not None:
+            metricas_calculadas["total_copies"] = response_total_copies.count
+
+        # 3. Tempo Médio de Análise
+        response_tempos_analise = supabase.table('metricas')\
+            .select('tempo_processamento')\
+            .eq('usuario_id', user_id)\
+            .eq('tipo', 'analise')\
+            .gt('tempo_processamento', 0)\
+            .execute()
+        if response_tempos_analise.data:
+            tempos = [item['tempo_processamento'] for item in response_tempos_analise.data if item.get('tempo_processamento') is not None]
+            if tempos:
+                metricas_calculadas["tempo_medio_analise"] = sum(tempos) / len(tempos)
+
+        # 4. Média de Notas e 5. Total de Feedback
+        response_feedbacks = supabase.table('feedback')\
+            .select('nota')\
+            .eq('usuario_id', user_id)\
+            .execute()
+        if response_feedbacks.data:
+            notas = [item['nota'] for item in response_feedbacks.data if item.get('nota') is not None]
+            metricas_calculadas["total_feedback"] = len(response_feedbacks.data)
+            if notas:
+                metricas_calculadas["media_notas"] = sum(notas) / len(notas)
+        
+        # 6. Plataformas Mais Usadas, 7. Objetivos Mais Comuns, 8. Últimas Análises
+        response_analises_detalhes = supabase.table('analises_leads')\
+            .select('plataforma, objetivo, data, total_leads, tempo_processamento')\
+            .eq('usuario_id', user_id)\
+            .order('data', desc=True)\
+            .limit(100) .execute() # Limitar para performance, dashboard mostra só top 5 anyway
+
+        if response_analises_detalhes.data:
+            for i, analise_item in enumerate(response_analises_detalhes.data):
+                plataforma = analise_item.get('plataforma')
+                objetivo = analise_item.get('objetivo')
+                if plataforma:
+                    metricas_calculadas["plataformas_mais_usadas"][plataforma] += 1
+                if objetivo:
+                    metricas_calculadas["objetivos_mais_comuns"][objetivo] += 1
+                
+                if i < 5: # Para a lista das 5 últimas análises
+                    data_iso = analise_item.get('data') 
+                    data_formatada = str(data_iso) # Default para string original
+                    if data_iso:
+                        try:
+                            if isinstance(data_iso, str):
+                                dt_obj = datetime.fromisoformat(data_iso.replace('Z', '+00:00').replace('+0000', '+00:00'))
+                                data_formatada = dt_obj.strftime("%d/%m/%Y %H:%M:%S")
+                            elif isinstance(data_iso, datetime):
+                                data_formatada = data_iso.strftime("%d/%m/%Y %H:%M:%S")
+                        except ValueError: # Tentar outro formato se ISO falhar
+                            try:
+                                if isinstance(data_iso, str):
+                                    dt_obj = datetime.strptime(data_iso, "%d/%m/%Y %H:%M:%S")
+                                    data_formatada = dt_obj.strftime("%d/%m/%Y %H:%M:%S")
+                            except ValueError:
+                                pass # Mantém str(data_iso)
+                    
+                    metricas_calculadas["analises"].append({
+                        "data": data_formatada,
+                        "plataforma": plataforma,
+                        "objetivo": objetivo,
+                        "total_leads": analise_item.get('total_leads'),
+                        "tempo_processamento": analise_item.get('tempo_processamento')
+                    })
+            
+        # Converter defaultdicts para dicts para o output final
+        metricas_calculadas["plataformas_mais_usadas"] = dict(metricas_calculadas["plataformas_mais_usadas"])
+        metricas_calculadas["objetivos_mais_comuns"] = dict(metricas_calculadas["objetivos_mais_comuns"])
+
+        return metricas_calculadas
+
     except Exception as e:
-        st.error(f"Erro ao carregar consumo de tokens: {e}")
-        return None
+        st.error(f"Erro ao carregar métricas gerais do Supabase: {e}")
+        return {
+            "total_analises": 0, "total_copies": 0, "tempo_medio_analise": 0.0,
+            "media_notas": 0.0, "total_feedback": 0, "plataformas_mais_usadas": {},
+            "objetivos_mais_comuns": {},
+            "analises": []
+        }
 
 def gerar_dashboard():
     """Gera o dashboard com métricas e visualizações importantes"""
@@ -1093,7 +1303,7 @@ def gerar_dashboard():
     historico_analises = carregar_historico_analises()
     consumo_tokens = carregar_consumo_tokens()
     
-    if not metricas and not metricas_plataforma and not historico_analises:
+    if not metricas and not metricas_plataforma and not historico_analises and not (consumo_tokens and consumo_tokens['total_tokens'] > 0):
         st.info("Nenhum dado disponível para exibir no dashboard. Comece a usar o sistema para gerar métricas.")
         return
     
@@ -1129,10 +1339,11 @@ def gerar_dashboard():
             # Gráfico de pizza para distribuição por operação
             fig = px.pie(
                 values=[
-                    consumo_tokens['por_operacao']['copy'],
-                    consumo_tokens['por_operacao']['analise']
+                    consumo_tokens['por_operacao'].get('copy', 0),
+                    consumo_tokens['por_operacao'].get('analise', 0),
+                    consumo_tokens['por_operacao'].get('outro', 0) # Adicionar 'outro' se houver
                 ],
-                names=['Copy', 'Análise'],
+                names=['Copy', 'Análise', 'Outro'],
                 title='Distribuição de Tokens por Operação'
             )
             st.plotly_chart(fig, use_container_width=True)
@@ -1307,13 +1518,23 @@ def gerar_dashboard():
             st.plotly_chart(fig, use_container_width=True)
 
 # Adicionar após as configurações iniciais
-def salvar_consumo_tokens(tokens_consumidos, tipo_operacao):
+def salvar_consumo_tokens(tokens_consumidos, tipo_operacao, username_email=None):
     try:
-        # Adicionar usuário_id se disponível
-        if 'username' in st.session_state:
-            usuario_id = st.session_state.username
-        else:
-            usuario_id = None
+        usuario_id_supabase = None
+        if username_email: # username_email é o email do usuário logado
+            auth_user = supabase.auth.get_user() # Tenta obter o usuário da sessão Supabase
+            if auth_user and auth_user.user:
+                usuario_id_supabase = auth_user.user.id
+            else:
+                # Fallback se não conseguir o user da sessão auth (pode acontecer se o token expirou)
+                # Tenta buscar pelo email, assumindo que st.session_state.username contém o email
+                if 'username' in st.session_state and st.session_state.username:
+                     user_lookup = supabase.table('users').select('id').eq('email', st.session_state.username).execute()
+                     if user_lookup.data:
+                         usuario_id_supabase = user_lookup.data[0]['id']
+
+        if not usuario_id_supabase and 'username' in st.session_state and st.session_state.username:
+             st.warning(f"Não foi possível determinar o ID do usuário Supabase para {st.session_state.username} ao salvar consumo de tokens. Tentando com o email como ID.")
 
         # Formatar dados para o Supabase
         payload = {
@@ -1321,7 +1542,7 @@ def salvar_consumo_tokens(tokens_consumidos, tipo_operacao):
             "total_tokens": tokens_consumidos,
             "plataforma": "copy" if tipo_operacao == "copy" else "analise",
             "tempo_processamento": 0, 
-            "usuario_id": usuario_id,
+            "usuario_id": usuario_id_supabase, # Pode ser None se não encontrado
             "data": datetime.now().isoformat()
         }
 
@@ -1331,7 +1552,7 @@ def salvar_consumo_tokens(tokens_consumidos, tipo_operacao):
         if response.data:
             return True
         else:
-            st.error("Erro ao salvar consumo de tokens no Supabase.")
+            st.error(f"Erro ao salvar consumo de tokens no Supabase: {response.error.message if response.error else 'Erro desconhecido'}")
             return False
     except Exception as e:
         st.error(f"Erro ao salvar consumo de tokens: {e}")
@@ -1341,37 +1562,45 @@ def salvar_consumo_tokens(tokens_consumidos, tipo_operacao):
 def salvar_metricas(metricas_data):
     """Salva as métricas de performance no Supabase"""
     try:
-        # Adicionar usuário_id se disponível
-        if 'username' in st.session_state:
-            metricas_data['usuario_id'] = st.session_state.username
+        usuario_id_supabase = None
+        if 'username' in st.session_state and st.session_state.username: # username é o email
+            auth_user = supabase.auth.get_user()
+            if auth_user and auth_user.user:
+                usuario_id_supabase = auth_user.user.id
+            # metricas_data['usuario_id'] não é usado diretamente aqui, mas pego de st.session_state
 
-        # Formatar dados para o Supabase
+        payload = {
+            "data": datetime.now().isoformat(),
+            "usuario_id": usuario_id_supabase # Pode ser None
+        }
+
         if "analise" in metricas_data:
             analise = metricas_data["analise"]
-            payload = {
+            payload.update({
                 "tipo": "analise",
                 "plataforma": analise["plataforma"],
-                "total_tokens": 0,
-                "tempo_processamento": analise["tempo_processamento"],
-                "data": datetime.now().isoformat()
-            }
-        elif "copy" in metricas_data:
-            payload = {
-                "tipo": "copy",
-                "plataforma": "copy",
+                "total_tokens": 0, # Tokens de análise são salvos por salvar_consumo_tokens
+                "tempo_processamento": analise["tempo_processamento"]
+            })
+        elif "copy" in metricas_data: # 'copy' não parece ser um tipo usado aqui atualmente
+            payload.update({
+                "tipo": "copy_gerada", # Mudar para tipo distinto se necessário
+                "plataforma": "copy_geral", # Ajustar conforme necessidade
                 "total_tokens": 0, 
-                "tempo_processamento": 0,
-                "data": datetime.now().isoformat()
-            }
+                "tempo_processamento": 0
+            })
         elif "feedback" in metricas_data:
-            feedback = metricas_data["feedback"]
-            payload = {
-                "tipo": "feedback",
-                "plataforma": "feedback",
+            # feedback = metricas_data["feedback"] # Não usado diretamente
+            payload.update({
+                "tipo": "feedback_recebido", # Mudar para tipo distinto
+                "plataforma": "feedback_sistema", # Ajustar
                 "total_tokens": 0,
                 "tempo_processamento": 0,
-                "data": datetime.now().isoformat()
-            }
+            })
+        else:
+            st.warning("Tipo de métrica desconhecido para salvar.")
+            return False
+
 
         # Salvar no Supabase
         response = supabase.table('metricas').insert(payload).execute()
@@ -1379,11 +1608,122 @@ def salvar_metricas(metricas_data):
         if response.data:
             return True
         else:
-            st.error("Erro ao salvar métricas no Supabase.")
+            st.error(f"Erro ao salvar métricas no Supabase: {response.error.message if response.error else 'Erro desconhecido'}")
             return False
     except Exception as e:
         st.error(f"Erro ao salvar métricas: {e}")
         return False
+
+def carregar_metricas_plataforma():
+    """Carrega as métricas específicas da plataforma mais recentes do Supabase."""
+    try:
+        auth_user = supabase.auth.get_user()
+        if not (auth_user and auth_user.user):
+            # st.error("Usuário não autenticado. Não é possível carregar métricas da plataforma.")
+            return {} 
+        user_id = auth_user.user.id
+
+        # Buscar todas as métricas de plataforma para o usuário
+        response = supabase.table('metricas_plataforma') \
+            .select('plataforma, metricas, data') \
+            .eq('usuario_id', user_id) \
+            .order('data', desc=True) \
+            .execute()
+
+        metricas_recentes_por_plataforma = {}
+        if response.data:
+            for item in response.data:
+                plataforma = item['plataforma']
+                # Se ainda não temos a métrica mais recente para esta plataforma, adicionamos
+                if plataforma not in metricas_recentes_por_plataforma:
+                    metricas_db = item.get('metricas')
+                    if isinstance(metricas_db, str):
+                        try:
+                            metricas_recentes_por_plataforma[plataforma] = json.loads(metricas_db)
+                        except json.JSONDecodeError:
+                            st.warning(f"Falha ao decodificar JSON de métricas para a plataforma {plataforma}")
+                            metricas_recentes_por_plataforma[plataforma] = METRICAS_POR_PLATAFORMA.get(plataforma, {}) # Fallback para estrutura padrão
+                    elif isinstance(metricas_db, dict):
+                        metricas_recentes_por_plataforma[plataforma] = metricas_db
+                    else:
+                        metricas_recentes_por_plataforma[plataforma] = METRICAS_POR_PLATAFORMA.get(plataforma, {}) # Fallback
+            return metricas_recentes_por_plataforma
+        return {} # Retornar dict vazio se não houver dados, para consistência
+
+    except Exception as e:
+        st.error(f"Erro ao carregar métricas da plataforma do Supabase: {e}")
+        return {} # Retornar dict vazio em caso de erro
+
+def carregar_consumo_tokens():
+    """Carrega o consumo de tokens do usuário a partir do Supabase."""
+    try:
+        auth_user = supabase.auth.get_user()
+        if not (auth_user and auth_user.user):
+            return {
+                "total_tokens": 0,
+                "historico": [],
+                "por_operacao": {"copy": 0, "analise": 0, "outro": 0}
+            }
+        user_id = auth_user.user.id
+
+        response = supabase.table('metricas')\
+            .select('total_tokens, tipo, plataforma, data')\
+            .eq('usuario_id', user_id)\
+            .gt('total_tokens', 0) \
+            .order('data', desc=True)\
+            .execute()
+
+        consumo = {
+            "total_tokens": 0,
+            "historico": [],
+            "por_operacao": defaultdict(int) 
+        }
+
+        if response.data:
+            for item in response.data:
+                tokens = item.get('total_tokens', 0)
+                consumo["total_tokens"] += tokens
+                
+                data_iso = item.get('data')
+                data_formatada = "Data Desconhecida"
+                if data_iso:
+                    try:
+                        data_formatada = datetime.fromisoformat(data_iso.replace('Z', '+00:00')).strftime("%d/%m/%Y %H:%M:%S")
+                    except ValueError:
+                        try:
+                            data_formatada = datetime.strptime(data_iso, "%d/%m/%Y %H:%M:%S").strftime("%d/%m/%Y %H:%M:%S")
+                        except ValueError:
+                            data_formatada = str(data_iso)
+                
+                consumo["historico"].append({
+                    "tokens": tokens,
+                    "tipo": item.get('tipo', 'desconhecido'),
+                    "plataforma": item.get('plataforma'),
+                    "data": data_formatada
+                })
+                
+                tipo_op = item.get('tipo', 'outro').lower()
+                if tipo_op in ["copy", "analise"]:
+                    consumo["por_operacao"][tipo_op] += tokens
+                else:
+                    consumo["por_operacao"]['outro'] += tokens
+            
+            consumo["historico"].reverse() 
+
+        consumo["por_operacao"] = {
+            "copy": consumo["por_operacao"]['copy'],
+            "analise": consumo["por_operacao"]['analise'],
+            "outro": consumo["por_operacao"]['outro']
+        }
+        return consumo
+        
+    except Exception as e:
+        st.error(f"Erro ao carregar consumo de tokens do Supabase: {e}")
+        return {
+            "total_tokens": 0,
+            "historico": [],
+            "por_operacao": {"copy": 0, "analise": 0, "outro": 0}
+        }
 
 # --- Interface Streamlit ---
 st.set_page_config(page_title="Gerador de Copy Mencare", layout="wide")
@@ -1408,7 +1748,26 @@ else:
         st.title("🤖 Gerador de Copy Mencare ✍️")
     with col2:
         if st.button("🚪 Logout"):
-            logout()
+            try:
+                # Adicionar logout do Supabase
+                supabase.auth.sign_out()
+                st.success("Logout realizado com sucesso!")
+            except Exception as e:
+                st.error(f"Erro ao fazer logout do Supabase: {e}")
+            
+            # Limpar estado da sessão do Streamlit
+            st.session_state.autenticado = False
+            st.session_state.username = None
+            st.session_state.login_success = False
+            # Limpar outros dados de sessão que dependem do usuário, se houver
+            st.session_state.generated_copy = ""
+            st.session_state.form_data = {}
+            st.session_state.historico = []
+            st.session_state.analise_leads = None
+            if 'analise_id' in st.session_state:
+                del st.session_state['analise_id']
+
+            st.rerun()
 
     # Criar as abas
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 Gerar Copy", "📚 Histórico", "📊 Análise de Leads", "📈 Métricas", "🎯 Dashboard"])
@@ -1573,47 +1932,74 @@ else:
                         st.warning("Por favor, defina um objetivo para a análise.")
                     else:
                         with st.spinner("Analisando seus leads... Isso pode levar alguns minutos."):
-                            # Combinar todos os DataFrames
                             df_combinado = pd.concat(dfs, ignore_index=True)
-                            
-                            # Remover duplicatas se houver
                             df_combinado = df_combinado.drop_duplicates()
                             
-                            # Realizar a análise
-                            analise, analise_id = analisar_leads_csv(df_combinado, plataforma_analise, objetivo_analise)
-                            if analise:
-                                st.session_state.analise_leads = analise
-                                st.session_state.analise_id = analise_id
+                            # Ajustar a chamada para receber três valores
+                            analise_texto_resultado, analise_db_id_retornado, tempo_proc_openai_retornado = analisar_leads_csv(
+                                df_combinado, plataforma_analise, objetivo_analise
+                            )
+                            
+                            if analise_texto_resultado and analise_db_id_retornado:
+                                st.session_state.analise_leads_conteudo_ia = analise_texto_resultado
+                                st.session_state.analise_id_atual_db = analise_db_id_retornado
                                 st.success("Análise concluída e salva no histórico!")
+                                
+                                # Salvar métricas usando o tempo de processamento retornado
+                                # A função salvar_metricas atualmente define "total_tokens": 0 e "tempo_processamento" 
+                                # para "analise" baseado no que é passado.
+                                metricas_payload_analise = {
+                                    "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                                    "plataforma": plataforma_analise,
+                                    "objetivo": objetivo_analise,
+                                    "total_leads": len(df_combinado),
+                                    "tempo_processamento": tempo_proc_openai_retornado # Passar o tempo correto
+                                }
+                                salvar_metricas({"analise": metricas_payload_analise})
+
+                            elif analise_texto_resultado is None and analise_db_id_retornado is None:
+                                # Erro já foi mostrado por analisar_leads_csv ou sua helper
+                                st.session_state.analise_leads_conteudo_ia = None
+                                st.session_state.analise_id_atual_db = None
+                            else: # Caso inesperado
+                                st.error("Ocorreu um erro inesperado durante a análise.")
+                                st.session_state.analise_leads_conteudo_ia = None
+                                st.session_state.analise_id_atual_db = None
                 
-                # Mostrar resultados da análise
-                if st.session_state.analise_leads:
+                # Mostrar resultados da análise (usando a nova chave de session_state)
+                if st.session_state.get('analise_leads_conteudo_ia'):
                     st.subheader("📊 Resultados da Análise")
-                    st.markdown(st.session_state.analise_leads)
+                    st.markdown(st.session_state.analise_leads_conteudo_ia)
                     
-                    # Seção de feedback
-                    st.subheader("💭 Feedback da Análise")
-                    with st.form("feedback_form"):
-                        pontos_positivos = st.text_area("Pontos Positivos:", 
-                            placeholder="O que você achou mais útil nesta análise?")
-                        pontos_melhorar = st.text_area("Pontos a Melhorar:", 
-                            placeholder="O que poderia ser melhorado nesta análise?")
-                        nota = st.slider("Nota da Análise:", 1, 5, 3)
-                        feedback_submit = st.form_submit_button("Enviar Feedback")
-                        
-                        if feedback_submit:
-                            feedback_data = {
-                                "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                                "pontos_positivos": pontos_positivos,
-                                "pontos_melhorar": pontos_melhorar,
-                                "nota": nota
-                            }
-                            if salvar_feedback(st.session_state.analise_id, feedback_data):
-                                st.success("Feedback enviado com sucesso! Obrigado por ajudar a melhorar nossas análises.")
+                    # Seção de feedback - só mostrar se a análise foi salva e temos um ID de DB
+                    if st.session_state.get('analise_id_atual_db'):
+                        st.subheader("💭 Feedback da Análise")
+                        # Usar uma chave de formulário única para evitar conflitos
+                        with st.form(f"feedback_form_nova_analise_{st.session_state.analise_id_atual_db}"):
+                            pontos_positivos = st.text_area("Pontos Positivos:", 
+                                placeholder="O que você achou mais útil nesta análise?", key=f"fp_pos_{st.session_state.analise_id_atual_db}")
+                            pontos_melhorar = st.text_area("Pontos a Melhorar:", 
+                                placeholder="O que poderia ser melhorado nesta análise?", key=f"fp_neg_{st.session_state.analise_id_atual_db}")
+                            nota = st.slider("Nota da Análise:", 1, 5, 3, key=f"fp_nota_{st.session_state.analise_id_atual_db}")
+                            feedback_submit = st.form_submit_button("Enviar Feedback")
+                            
+                            if feedback_submit:
+                                feedback_data_payload = {
+                                    "pontos_positivos": pontos_positivos,
+                                    "pontos_melhorar": pontos_melhorar,
+                                    "nota": nota
+                                }
+                                # Usar o ID UUID do banco de dados armazenado na session_state
+                                if salvar_feedback(st.session_state.analise_id_atual_db, feedback_data_payload):
+                                    st.success("Feedback enviado com sucesso! Obrigado por ajudar a melhorar nossas análises.")
+                                else:
+                                    st.error("Falha ao enviar o feedback.")
+                    else:
+                        if st.session_state.get('analise_leads_conteudo_ia'): # Só mostrar esta msg se houve tentativa de análise
+                            st.info("A análise precisa ser salva com sucesso no banco de dados antes de adicionar feedback.")
                     
-                    # Botão para copiar a análise
-                    if st.button("📋 Copiar Análise"):
-                        st.code(st.session_state.analise_leads)
+                    if st.button("📋 Copiar Análise (Resultados)", key=f"copiar_analise_nova_{st.session_state.get('analise_id_atual_db', '')}"):
+                        st.code(st.session_state.analise_leads_conteudo_ia)
                         st.success("Análise copiada para a área de transferência!")
             
             except Exception as e:
